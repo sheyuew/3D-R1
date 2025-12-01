@@ -22,7 +22,7 @@ from utils.random_cuboid import RandomCuboid
 
 IGNORE_LABEL = -100
 MEAN_COLOR_RGB = np.array([109.8, 97.2, 83.8])
-BASE = "."  ## Replace with path to dataset
+BASE = "/root/autodl-tmp/Scene-30K"  ## Replace with path to dataset
 DATASET_ROOT_DIR = os.path.join(BASE, "data", "scannet", "scannet_data")
 DATASET_METADATA_DIR = os.path.join(BASE, "data", "scannet", "meta_data")
 
@@ -150,7 +150,7 @@ class ScanNetBaseDataset(Dataset):
         random_cuboid_min_points=30000,
         use_additional_encoders=False,
     ):
-
+        self.args=args
         self.dataset_config = dataset_config
         # assert split_set in ["train", "val"]
         
@@ -386,7 +386,8 @@ class ScanNetBaseDataset(Dataset):
         # Load additional modal data if enabled
         if self.use_additional_encoders:
             # Load multiple images if available
-            image_path = os.path.join(self.data_path, scan_name, "images")
+            image_path = os.path.join("/root/autodl-tmp/ScanNet_Images/frames_square/", scan_name, "color")
+
             if os.path.exists(image_path):
                 try:
                     image_files = [f for f in os.listdir(image_path) if f.endswith(('.jpg', '.png', '.jpeg'))]

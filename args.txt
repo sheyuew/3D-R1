@@ -1,0 +1,1 @@
+image_path:/root/autodl-tmp/ScanNet_Images/frames_square/scene0499_00/color

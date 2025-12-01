@@ -24,7 +24,20 @@ class SigLIP2ImageEncoder(nn.Module):
         try:
             from transformers import AutoProcessor, AutoModel
             self.processor = AutoProcessor.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name)
+            full_model = AutoModel.from_pretrained(model_name)
+            self.model = full_model.vision_model
+
+            # --- START DEBUG LOGGING (根源判断) ---
+            # 检查加载的模型是否包含文本组件 (text_model)，这是报错的直接证据
+            # with open("model_type_check.txt", "w+") as f:
+            #     if hasattr(self.model, 'text_model'):
+            #         f.write(f"model name: {model_name}\n")
+            #         f.write("Diagnosis: TRUE. Model contains text_model (Joint Model).\n")
+            #         f.write("Conclusion: Must extract pure vision_model to avoid input_ids error.\n")
+            #     else:
+            #         f.write("Diagnosis: FALSE. Model is already pure vision model.\n")
+            #     f.write(f"Model Class: {type(self.model)}\n")
+
             self.model.to(device)
             self.model.eval()
         except ImportError:
@@ -98,13 +111,31 @@ class SigLIP2ImageEncoder(nn.Module):
             for j in range(num_views):
                 # Process each image individually
                 single_image = images[i, j].unsqueeze(0)  # Add batch dimension
-                processed_image = self.preprocess_images(single_image)
+
+                image_np = single_image.squeeze(0).cpu().numpy()
+                image_np = (image_np.transpose(1, 2, 0) * 255).astype(np.uint8) 
+                inputs_processed = self.processor(
+                    images=image_np, 
+                    return_tensors="pt"
+                )
+                processed_image = inputs_processed.pixel_values.to(self.device)
                 
+                # processed_image = self.preprocess_images(single_image)
+
                 # Process with SigLIP-2
                 with torch.no_grad():
                     # Use the model's forward pass to get features
-                    outputs = self.model(processed_image, output_hidden_states=True)
+                    # with open("images_pro.txt","w+") as f:
+                    #     f.write(f"input imgaes:{processed_image}")
+                    outputs = self.model(pixel_values=processed_image, output_hidden_states=True)
                     
+                    # with open("outputs.txt","w+") as f:
+                    #     f.write(f"outputs: {outputs}\n")
+                    #     f.write(f"last_hidden_state:{outputs.last_hidden_state.shape}\n")
+                    #     f.write(f"Outputs Attributes (dir()): {dir(outputs)}\n")
+                    #     f.write(f"Has last_hidden_state: {hasattr(outputs, 'last_hidden_state')}\n")
+                    #     f.write(f"Has pooler_output: {hasattr(outputs, 'pooler_output')}\n")
+
                     # Extract features from the last layer
                     if hasattr(outputs, 'last_hidden_state'):
                         features = outputs.last_hidden_state
@@ -115,9 +146,9 @@ class SigLIP2ImageEncoder(nn.Module):
                         features = outputs[0]
                     
                     # Global average pooling if needed
-                    if features.dim() > 2:
-                        features = F.adaptive_avg_pool2d(features, (1, 1)).squeeze(-1).squeeze(-1)
-                    
+                    # if features.dim() > 2:
+                    #     features = F.adaptive_avg_pool2d(features, (1, 1)).squeeze(-1).squeeze(-1)
+                    features = torch.mean(features, dim=1) # (1, 576, 1024) -> (1, 1024)
                     # Project to output dimension
                     features = self.feature_projection(features)
                     
@@ -174,4 +205,6 @@ class SigLIP2ImageEncoder(nn.Module):
         Returns:
             Encoded image features (B, output_dim)
         """
+        # with open("images.txt","w+") as f:
+        #     f.write(f"input imgaes:{images}")
         return self.encode_images(images)

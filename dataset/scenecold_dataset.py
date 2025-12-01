@@ -21,6 +21,7 @@ class Dataset(ScanNetBaseDataset):
         use_height=False,
         augment=False,
         use_additional_encoders=False,
+        use_rl_training=False,
     ):
         super().__init__(
             args,
@@ -35,6 +36,7 @@ class Dataset(ScanNetBaseDataset):
             use_random_cuboid=False,
             use_additional_encoders=use_additional_encoders,
         )
+        self.use_rl_training=use_rl_training
 
         self.task_name = 'cold-start'
         self.split = split_set
@@ -52,6 +54,11 @@ class Dataset(ScanNetBaseDataset):
               f"{len(self.annotations)} Q&A  from {len(self.scan_names)} scans")
 
         self.tokenizer = AutoTokenizer.from_pretrained(args.vocab)
+
+        self.tokenizer.padding_side = 'left'
+        
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         
         if not all(tok in self.tokenizer.vocab for tok in SPECIAL_TOKENS):
             self.tokenizer.add_tokens(SPECIAL_TOKENS, special_tokens=True)
@@ -86,7 +93,7 @@ class Dataset(ScanNetBaseDataset):
         q, cot = sample["question"].strip(), sample["cot"].strip()
 
         source_txt  = f"given the 3D scene and description:{description}, think step by step and answer the following question:{q}."
-        target_txt  = f"{source_txt} Output format:<think>...reasoning...</think><answer>..final answer...</answer> {cot} "
+        target_txt  = f"{source_txt} Output format:<think>...reasoning...</think><answer>..final answer...</answer> {cot} {self.tokenizer.eos_token}"
         enc_source  = self.tokenizer.batch_encode_plus([source_txt], **self.cfg)
         enc_target  = self.tokenizer.batch_encode_plus([target_txt], **self.cfg)
 
@@ -108,11 +115,78 @@ class Dataset(ScanNetBaseDataset):
         ret["input_ids"]        = enc_target["input_ids"][0].astype(np.int64)
         ret["attention_mask"]   = enc_target["attention_mask"][0].astype(np.float32)
         
-        # Improved gradient mask computation to prevent extreme values
-        gradient_mask = enc_target['attention_mask'][0] - enc_source['attention_mask'].astype(np.float32)
-        # Ensure gradient mask is non-negative and properly normalized
-        gradient_mask = np.maximum(gradient_mask, 0.0)
+        # # Improved gradient mask computation to prevent extreme values
+        # gradient_mask = enc_target['attention_mask'][0] - enc_source['attention_mask'].astype(np.float32)
+        
+        # # Ensure gradient mask is non-negative and properly normalized
+        # gradient_mask = np.maximum(gradient_mask, 0.0)
+        # ret["gradient_mask"] = gradient_mask.astype(np.float32)
+        # =================【修复mask】=================
+        # 1. 获取 Source (Prompt) 和 Target (Prompt + Answer) 的真实有效长度
+        len_source = int(enc_source['attention_mask'][0].sum())
+        len_target = int(enc_target['attention_mask'][0].sum())
+        len_total = len(ret["input_ids"]) 
+        
+        # 2. 初始化全 0 mask
+        gradient_mask = np.zeros(len_total, dtype=np.float32)
+        
+        # 3. 计算 Answer 在左填充序列中的起始位置
+        # 逻辑：总长度 - Target有效长度(包含Prompt+Answer) + Source有效长度(Prompt)
+        # 剩下的右边部分就是 Answer
+        start_answer_idx = len_total - len_target + len_source
+        
+        # 4. 将 Answer 部分设为 1
+        if start_answer_idx < len_total:
+            gradient_mask[start_answer_idx:] = 1.0
+            
         ret["gradient_mask"] = gradient_mask.astype(np.float32)
+        # ==========================================================
+
+        # #=================【诊断探针 START】=================
+        # # 只记录前 10 个样本，避免日志文件过大
+        # if idx % 100 == 0:
+        #     try:
+        #         # 1. 获取关键长度信息
+        #         len_source = int(enc_source['attention_mask'][0].sum())  # 提问的长度
+        #         len_target = int(enc_target['attention_mask'][0].sum())  # 提问+回答的长度
+        #         len_total = len(ret["input_ids"])                       # 总长度 (256)
+                
+        #         # 2. 推导：在“左填充”模式下，Answer 应该在哪里？
+        #         # 结构应该是: [Pad, ..., Pad, Prompt, Answer]
+        #         # 有效数据区长度 = len_target
+        #         # 有效数据起始点 = len_total - len_target
+        #         # Answer 起始点  = 有效数据起始点 + len_source
+        #         expected_start = len_total - len_target + len_source
+                
+        #         # 3. 观测：现在的 Mask 实际上在哪里？
+        #         mask_indices = np.where(gradient_mask > 0)[0]
+        #         actual_start = mask_indices[0] if len(mask_indices) > 0 else -1
+                
+        #         # 4. 写入日志
+        #         with open("/root/3D-R1/debug_mask_diagnosis.txt", "w") as f:
+        #             f.write(f"\n>>> Sample {idx} Diagnosis <<<\n")
+        #             f.write(f"Info: Total Len={len_total} | Valid Len={len_target} | Prompt Len={len_source}\n")
+        #             f.write(f"Expect Answer Start: {expected_start}\n")
+        #             f.write(f"Actual Mask Start:   {actual_start}\n")
+                    
+        #             # 自动判断结论
+        #             if actual_start == -1:
+        #                 f.write("RESULT: Mask is empty! (ERROR)\n")
+        #             elif actual_start < expected_start - 2: # 允许1-2个token的误差
+        #                 f.write(f"RESULT: ❌ Mask TOO EARLY! Diff = {expected_start - actual_start} tokens.\n")
+        #                 f.write("       (Means mask is covering the PROMPT, confirming the bug.)\n")
+        #             elif actual_start > expected_start + 2:
+        #                 f.write("RESULT: ❌ Mask TOO LATE! (Unusual)\n")
+        #             else:
+        #                 f.write("RESULT: ✅ Mask looks correct.\n")
+                        
+        #             # 可视化末尾 50 个 Token 的 Mask 状态
+        #             f.write(f"Mask (last 50): {gradient_mask[-50:].astype(int).tolist()}\n")
+        #             f.flush()
+        #             os.fsync(f.fileno())
+        #     except Exception as e:
+        #         pass
+        # # =================【诊断探针 END】=================
         ret['scan_idx'] = np.array(idx).astype(np.int64)
         ret["instruction"] = enc_source['input_ids'][0].astype(np.int64)
         ret["instruction_mask"] = enc_source['attention_mask'][0].astype(np.float32)

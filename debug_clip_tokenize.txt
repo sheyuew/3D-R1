@@ -1,0 +1,8 @@
+--- CLIP Tokenization Debug ---
+Text Type: <class 'str'>
+Text Content (First 50 chars): given the 3D scene and description:In this bathroo...
+------------------------------
+--- CLIP Tokenization Debug ---
+Text Type: <class 'str'>
+Text Content (First 50 chars): given the 3D scene and description:In the Bathroom...
+------------------------------

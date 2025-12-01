@@ -76,6 +76,64 @@ class DynamicViewSelection(nn.Module):
                   wc_norm * coverage + 
                   wclip_norm * clip_alignment)
         return utility
+
+    def _encode_long_text_chunking(self, text):
+        """
+        处理超过 77 个 Token 的长文本，并返回聚合特征。
+        策略：检测长度，如果超过 MAX 则分片平均，否则直接编码。
+        """
+        CLIP_MAX_LENGTH = 77
+        MAX_CONTENT_LEN = CLIP_MAX_LENGTH - 2  # 75, 除去 SOT 和 EOT
+        
+        import clip.simple_tokenizer
+        tokenizer = clip.simple_tokenizer.SimpleTokenizer()
+        content_tokens = tokenizer.encode(text) 
+
+        # 排除 SOT/EOT 后的实际内容 Token
+        seq_len = len(content_tokens) # 使用 len() 因为是 list
+
+        # --- 情况 A: 文本不长，直接编码返回 ---
+        if seq_len <= MAX_CONTENT_LEN:
+            # truncate=True 确保自动填充 Padding
+            text_tokens = clip.tokenize([text], context_length=CLIP_MAX_LENGTH, truncate=True).to(self.device)
+            with torch.no_grad():
+                return self.clip_model.encode_text(text_tokens).float()
+
+        # --- 情况 B: 文本过长，进行分片平均 (Directly Chunking) ---
+        
+        # 计算需要分多少块 (向上取整)
+        num_chunks = (seq_len + MAX_CONTENT_LEN - 1) // MAX_CONTENT_LEN
+        chunk_features = []
+        
+        with torch.no_grad():
+            for k in range(num_chunks):
+                # 确定当前块的 Token 范围
+                start = k * MAX_CONTENT_LEN
+                end = min((k + 1) * MAX_CONTENT_LEN, seq_len)
+                
+                # 提取当前块的 Token ID
+                chunk_content = content_tokens[start:end]
+                
+                # 解码回字符串 -> 重新编码
+                text_chunk = tokenizer.decode(chunk_content)
+                
+                chunk_input = clip.tokenize(
+                    [text_chunk], 
+                    context_length=CLIP_MAX_LENGTH, 
+                    truncate=True
+                ).to(self.device)
+
+                # 编码当前块
+                feature = self.clip_model.encode_text(chunk_input).float()
+                chunk_features.append(feature)
+                
+            # 平均池化所有块的特征
+            if chunk_features:
+                return torch.stack(chunk_features, dim=0).mean(dim=0)
+            else:
+                return torch.zeros(1, 512, device=self.device)
+
+
     
     def render_candidate_views(self, point_cloud, num_candidates=8,point_cloud_color = None):
         """Render candidate views from point cloud using proper 3D rendering
@@ -107,7 +165,7 @@ class DynamicViewSelection(nn.Module):
             
             # Calculate camera orientation
             forward = F.normalize(look_at - camera_pos, dim=-1)
-            right = F.normalize(torch.cross(forward, torch.tensor([0, 0, 1.0], device=look_at.device)), dim=-1)
+            right = F.normalize(torch.cross(forward, torch.tensor([0, 0, 1.0], device=look_at.device), dim=-1), dim=-1)
             up = F.normalize(torch.cross(right, forward), dim=-1)
             
             # Create rotation matrix
@@ -159,7 +217,7 @@ class DynamicViewSelection(nn.Module):
         
         return view_features
     
-    def forward(self, point_cloud, text):
+    def forward(self, point_cloud, text, point_cloud_color):
         """Forward pass with real rendering and encoding"""
         # Render candidate views from point cloud
         rendered_images = self.render_candidate_views(point_cloud, point_cloud_color=point_cloud_color)
@@ -168,10 +226,11 @@ class DynamicViewSelection(nn.Module):
         view_features = self.encode_views_with_clip(rendered_images).float()
         
         # Encode text with CLIP
-        text_tokens = clip.tokenize([text]).to(self.device)
-        with torch.no_grad():
-            text_features = self.clip_model.encode_text(text_tokens).float()
-        
+        # text_tokens = clip.tokenize([text],context_length=77).to(self.device)
+        # with torch.no_grad():
+        #     text_features = self.clip_model.encode_text(text_tokens).float()
+        text_features = self._encode_long_text_chunking(text).float()
+
         # Compute scores
         text_relevance, coverage, clip_alignment = self.compute_scores(
             view_features, text_features

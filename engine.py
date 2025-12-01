@@ -121,32 +121,32 @@ def do_train(
             # Enhanced gradient clipping with better monitoring
             if args.clip_gradient > 0:
                 # Check gradient norms before clipping
-                total_norm = 0
-                param_count = 0
-                for p in model.parameters():
-                    if p.grad is not None:
-                        param_norm = p.grad.data.norm(2)
-                        total_norm += param_norm.item() ** 2
-                        param_count += 1
-                total_norm = total_norm ** (1. / 2)
+                # total_norm = 0
+                # param_count = 0
+                # for p in model.parameters():
+                #     if p.grad is not None:
+                #         param_norm = p.grad.data.norm(2)
+                #         total_norm += param_norm.item() ** 2
+                #         param_count += 1
+                # total_norm = total_norm ** (1. / 2)
                 
-                # Log gradient norm if it's unusually large
-                if total_norm > 10.0:
-                    logout(f"Warning: Large gradient norm detected: {total_norm:.4f}")
+                # # Log gradient norm if it's unusually large
+                # if total_norm > 10.0:
+                #     logout(f"Warning: Large gradient norm detected: {total_norm:.4f}")
                 
                 # Apply gradient clipping
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_gradient)
                 
-                # Check gradient norm after clipping
-                total_norm_after = 0
-                for p in model.parameters():
-                    if p.grad is not None:
-                        param_norm = p.grad.data.norm(2)
-                        total_norm_after += param_norm.item() ** 2
-                total_norm_after = total_norm_after ** (1. / 2)
+                # # Check gradient norm after clipping
+                # total_norm_after = 0
+                # for p in model.parameters():
+                #     if p.grad is not None:
+                #         param_norm = p.grad.data.norm(2)
+                #         total_norm_after += param_norm.item() ** 2
+                # total_norm_after = total_norm_after ** (1. / 2)
                 
-                if total_norm_after > args.clip_gradient * 1.1:
-                    logout(f"Warning: Gradient clipping may not be effective. Norm after clipping: {total_norm_after:.4f}")
+                # if total_norm_after > args.clip_gradient * 1.1:
+                #     logout(f"Warning: Gradient clipping may not be effective. Norm after clipping: {total_norm_after:.4f}")
             
             optimizer.step()
     
@@ -185,8 +185,13 @@ def do_train(
                 
                 eval_metrics = {}
                 model.eval()
+
                 for test_loader in dataloaders['test']:
-                    task_metrics = test_loader.dataset.eval_func(
+                    raw_dataset = test_loader.dataset
+                    if hasattr(raw_dataset, 'dataset'): 
+                        raw_dataset = raw_dataset.dataset
+
+                    task_metrics = raw_dataset.eval_func(
                         args,
                         curr_epoch,
                         model,

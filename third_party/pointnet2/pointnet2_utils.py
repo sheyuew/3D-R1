@@ -221,6 +221,14 @@ class GroupingOperation(Function):
         torch.Tensor
             (B, C, npoint, nsample) tensor
         """
+
+        # === 修复开始：强制转换为 float32 ===
+        features = features.contiguous()
+        idx = idx.contiguous()
+
+        if features.dtype != torch.float32:
+            features = features.float()
+        # ================================
         B, nfeatures, nsample = idx.size()
         _, C, N = features.size()
 
@@ -244,6 +252,11 @@ class GroupingOperation(Function):
             (B, C, N) gradient of the features
         None
         """
+        # === 修复开始：强制梯度转换为 float32 ===
+        grad_out = grad_out.contiguous()
+        if grad_out.dtype != torch.float32:
+            grad_out = grad_out.float()
+        # ====================================
         idx, N = ctx.for_backwards
 
         grad_features = _ext.group_points_grad(grad_out.contiguous(), idx, N)

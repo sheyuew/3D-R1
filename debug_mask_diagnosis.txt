@@ -1,0 +1,7 @@
+
+>>> Sample 26600 Diagnosis <<<
+Info: Total Len=256 | Valid Len=256 | Prompt Len=146
+Expect Answer Start: 146
+Actual Mask Start:   146
+RESULT: ✅ Mask looks correct.
+Mask (last 50): [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]

@@ -126,6 +126,8 @@ class captioner(nn.Module):
         self.use_multimodal_model = getattr(args, 'use_multimodal_model', False)
         
         if self.use_multimodal_model:
+            # with open("vocab.txt","w+") as f:
+            #     f.write(f"vocab:{type(args.vocab)}\n{args.vocab}")
             # Prefer Vision-Language models like Qwen2.5-VL-7B when enabled
             try:
                 # Load processor when available (e.g., Qwen2.5-VL)
@@ -175,7 +177,7 @@ class captioner(nn.Module):
         if self.use_lora and PEFT_AVAILABLE:
             # Choose task type based on model type
             if self.use_multimodal_model:
-                task_type = TaskType.VISION_2_SEQ
+                task_type = TaskType.CAUSAL_LM
                 print("Using LoRA for multimodal model (Vision2Seq)")
             else:
                 task_type = TaskType.CAUSAL_LM
@@ -369,6 +371,9 @@ class captioner(nn.Module):
             
             # Image encoder
             if self.image_encoder is not None and "images" in inputs:
+                # with open("images.txt","w+") as f:
+                #     input_images=inputs["images"]
+                #     f.write(f"input imgaes:{input_images}")
                 image_features = self.image_encoder(inputs["images"])
                 additional_features.append(image_features)
             
@@ -396,7 +401,7 @@ class captioner(nn.Module):
             point_cloud_color = None
             if 'point_clouds_color' in inputs:
                 point_cloud_color = inputs["point_clouds_color"][0]
-            selected_view_features, view_indices = self.view_selection(point_cloud, instruction_text, point_cloud_color)t)
+            selected_view_features, view_indices = self.view_selection(point_cloud, instruction_text, point_cloud_color)
             
             # Add view selection features to encoder hidden states
             # This is a simplified integration - in practice you might want more sophisticated fusion
@@ -478,6 +483,10 @@ class captioner(nn.Module):
             click_query=click_query,
             click_qmask=click_qmask
         )
+
+        prefix_tokens = torch.nn.functional.normalize(prefix_tokens, dim=-1)
+        prefix_tokens = 10.0 * prefix_tokens
+
         prefix_mask = torch.ones_like(prefix_tokens[..., 0])
         # ---- batch x (ntoken + nword) x n_embd
         inputs_embeds = torch.cat((prefix_tokens, embedding_layer(input_ids)), dim=1)
@@ -490,10 +499,8 @@ class captioner(nn.Module):
             visual_features = prefix_tokens[:, :self.nlatent_query, :]  # Use latent queries as visual features
             
             outputs = self.transformer(
-                input_ids=input_ids,
-                attention_mask=input_mask.to(self.dtype),
-                pixel_values=visual_features.to(self.dtype),  # Use as pseudo pixel values
-                return_dict=True
+            inputs_embeds=inputs_embeds.to(self.dtype),
+            attention_mask=attention_mask.to(self.dtype),
             )
         else:
             # Original causal LM approach
@@ -569,9 +576,9 @@ class captioner(nn.Module):
             final_loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
         
         # parameter activation for multi-gpu training
-        for param in self.parameters():
-            if param.requires_grad:
-                final_loss += 0 * torch.sum(param.to(final_loss.dtype) ** 2)
+        # for param in self.parameters():
+        #     if param.requires_grad:
+        #         final_loss += 0 * torch.sum(param.to(final_loss.dtype) ** 2)
         return final_loss
     
     def save_lora_weights(self, path: str):

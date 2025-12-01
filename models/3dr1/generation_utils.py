@@ -9,9 +9,14 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
     ## prepare inputs
     max_length = kwargs['max_length']
     inputs_embeds = kwargs['inputs_embeds'] # batch x nwords x channel
+
+    attention_mask = kwargs.get('attention_mask', None)
     
-    batch, _, channel = inputs_embeds.shape
+    batch, seq_len, channel = inputs_embeds.shape
     
+    if attention_mask is None:
+        attention_mask = torch.ones((batch, seq_len), dtype=torch.long, device=inputs_embeds.device)
+
     ## prepare storage
     output_ids = torch.ones(batch, max_length).long().to(inputs_embeds.device)
     output_ids = output_ids * kwargs['eos_token_id']
@@ -21,9 +26,14 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
     finished_batchs = torch.zeros(batch).bool().to(inputs_embeds.device)
     embedding_layer = transformer.get_input_embeddings()
     for word_id in range(max_length):
+
+        temporal_input_ids = torch.zeros((batch, seq_len), dtype=torch.long, device=inputs_embeds.device)
         
         step_output = transformer(
             inputs_embeds=temporal_inputs,
+            input_ids = temporal_input_ids,
+            attention_mask=attention_mask,
+            use_cache=False
         )
         
         ## greedy decoding, find out whats the most possible word
@@ -36,6 +46,16 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         output_ids[:, word_id] = next_word_id.long()    # (batch, )
         
         temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
+
+        new_dummy_ids = torch.zeros((batch, word_id + 1), dtype=torch.long, device=inputs_embeds.device)
+        temporal_input_ids = torch.cat(
+            [torch.zeros((batch, seq_len), dtype=torch.long, device=inputs_embeds.device), new_dummy_ids], 
+            dim=1
+        )
+        if attention_mask is not None:
+            # 生成一个全 1 的 mask (表示新生成的词是有效的)
+            new_mask_bit = torch.ones((batch, 1), dtype=attention_mask.dtype, device=attention_mask.device)
+            attention_mask = torch.cat([attention_mask, new_mask_bit], dim=1)
         
     return OrderedDict({'output_ids': output_ids.long()})
 

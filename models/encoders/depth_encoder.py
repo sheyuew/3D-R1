@@ -248,8 +248,10 @@ class DepthAnythingV2Encoder(nn.Module):
         else:
             # Use CNN fallback
             features = self._fallback_depth_encoding(depth_maps)
-        
-        # Project to output dimension
+
+        target_device = next(self.feature_projection.parameters()).device
+
+        features = features.to(target_device)
         encoded_features = self.feature_projection(features)
         return encoded_features
     

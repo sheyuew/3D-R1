@@ -1,0 +1,2 @@
+Diagnosis: FALSE. Model is already pure vision model.
+Model Class: <class 'transformers.models.siglip.modeling_siglip.SiglipVisionTransformer'>

@@ -4,6 +4,8 @@ import os, re, time, json, torch
 from collections import OrderedDict, Counter
 from tqdm import tqdm
 
+import numpy as np
+
 import utils.capeval.bleu.bleu   as capblue
 import utils.capeval.cider.cider as capcider
 import utils.capeval.rouge.rouge as caprouge
@@ -62,10 +64,13 @@ def evaluate(
     dataset_loader,
     logout=print,
     curr_train_iter=-1,
-):
+):  
+    raw_dataset = dataset_loader.dataset
+    if hasattr(raw_dataset,"dataset"):
+        raw_dataset=raw_dataset.dataset
     device     = next(model.parameters()).device
-    tokenizer  = dataset_loader.dataset.tokenizer
-    annotations = dataset_loader.dataset.annotations
+    tokenizer  = raw_dataset.tokenizer
+    annotations = raw_dataset.annotations
     num_batches = len(dataset_loader)
     time_delta  = SmoothedValue(10)
 
@@ -80,8 +85,25 @@ def evaluate(
         tic = time.time()
         
         # Optimized data loading - move to device in one go
-        batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+        batch = {k: (v.to(device, non_blocking=True) if hasattr(v,"to") else v) for k, v in batch.items()}
+        
+        new_batch = {}
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                new_batch[k] = v.to(device, non_blocking=True)
+            elif isinstance(v, np.ndarray):
+                # 如果是 Numpy 数组
+                if v.dtype.kind in {'i', 'f', 'u'}:
+                    # 强制转为 Tensor 并搬到 GPU
+                    v_tensor = torch.from_numpy(v)
+                    new_batch[k] = v_tensor.to(device, non_blocking=True)
+                else:
+                    new_batch[k] = v
+            else:
+                new_batch[k] = v
 
+            batch = new_batch
+        
         model_inp = {
             'point_clouds':          batch['point_clouds'],
             'point_clouds_color':    batch['pcl_color'],

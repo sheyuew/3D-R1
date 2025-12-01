@@ -333,7 +333,10 @@ def main(local_rank, args):
             )
         
         for test_loader in dataloaders['test']:
-            test_loader.dataset.eval_func(
+            raw_dataset = test_loader.dataset
+            if hasattr(raw_dataset ,"dataset"):
+                raw_dataset=raw_dataset.dataset
+            raw_dataset.eval_func(
                 args,
                 -1,
                 model,
